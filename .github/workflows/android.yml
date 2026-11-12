@@ -1,1 +1,63 @@
 
+name: Android Cloud with Ngrok
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+
+    steps:
+      - name: Install requirements
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 qemu-utils wget novnc python3-websockify
+
+      - name: Download Android
+        run: |
+          wget -O android.iso "https://sourceforge.net/projects/android-x86/files/Release%209.0/android-x86_64-9.0-r2.iso/download"
+
+      - name: Install Ngrok
+        run: |
+          curl -sSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc \
+            | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
+          echo "deb https://ngrok-agent.s3.amazonaws.com buster main" \
+            | sudo tee /etc/apt/sources.list.d/ngrok.list
+          sudo apt-get update
+          sudo apt-get install -y ngrok
+
+      - name: Configure Ngrok
+        env:
+          NGROK_TOKEN: ${{ secrets.NGROK_AUTHTOKEN }}
+        run: |
+          ngrok config add-authtoken "$NGROK_TOKEN"
+
+      - name: Start Android
+        run: |
+          qemu-system-x86_64 \
+            -m 3072 \
+            -smp 2 \
+            -accel tcg \
+            -vga std \
+            -cdrom android.iso \
+            -boot d \
+            -netdev user,id=net0 \
+            -device e1000,netdev=net0 \
+            -vnc 127.0.0.1:1 \
+            -daemonize
+
+      - name: Start browser access
+        env:
+          WEB_USER: ${{ secrets.NOVNC_USER }}
+          WEB_PASS: ${{ secrets.NOVNC_PASS }}
+        run: |
+          websockify --web=/usr/share/novnc/ \
+            6080 localhost:5901 &
+          sleep 5
+          ngrok http 6080 \
+            --basic-auth="$WEB_USER:$WEB_PASS"
